@@ -161,80 +161,101 @@ export class Embedder {
     filePath: string,
     progressBar: cliProgress.SingleBar
   ): Promise<void> {
-    // File read errors should be logged as warnings and continue
-    let content: string;
+    // Intercept console output during processing to avoid interfering with progress bar
+    const originalWarn = console.warn;
+    const capturedWarnings: string[] = [];
+    console.warn = (...args: any[]) => {
+      capturedWarnings.push(args.join(' '));
+    };
+
     try {
-      content = this.fileDiscovery.readFileContent(filePath);
-    } catch (error) {
-      this.stats.warnings.push(
-        `Cannot read ${filePath}: ${error instanceof Error ? error.message : String(error)}`
-      );
-      progressBar.increment();
-      return;
-    }
+      // File read errors should be logged as warnings and continue
+      let content: string;
+      try {
+        content = this.fileDiscovery.readFileContent(filePath);
+      } catch (error) {
+        this.stats.warnings.push(
+          `Cannot read ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+        );
+        progressBar.increment();
+        return;
+      }
 
-    // Check if file needs processing
-    if (!this.stateManager.needsProcessing(filePath, content)) {
-      this.stats.filesSkipped++;
-      progressBar.increment();
-      return;
-    }
+      // Check if file needs processing
+      if (!this.stateManager.needsProcessing(filePath, content)) {
+        this.stats.filesSkipped++;
+        progressBar.increment();
+        return;
+      }
 
-    // Chunk the document
-    const chunks = await this.chunkDocument(content, filePath);
+      // Chunk the document
+      const chunks = await this.chunkDocument(content, filePath);
 
-    if (chunks.length === 0) {
-      this.stats.warnings.push(`No chunks generated for ${filePath}`);
-      progressBar.increment();
-      return;
-    }
+      if (chunks.length === 0) {
+        this.stats.warnings.push(`No chunks generated for ${filePath}`);
+        progressBar.increment();
+        return;
+      }
 
-    // Generate embeddings - throws on failure
-    const model = this.openaiProvider.embedding(this.options.model);
+      // Generate embeddings - throws on failure
+      const model = this.openaiProvider.embedding(this.options.model);
 
-    const { embeddings } = await embedMany({
-      model,
-      values: chunks.map((chunk) => chunk.text),
-    });
-
-    // Store embeddings in LanceDB - throws on failure
-    if (!this.vectorStore) {
-      throw new Error("Vector store not initialized");
-    }
-
-    // Delete existing vectors for this file path before inserting new ones
-    await this.deleteExistingVectors(filePath);
-
-    // If table doesn't exist, create it with first batch of data
-    if (!this.tableExists) {
-      const initialData = embeddings.map((vector, i) => ({
-        id: crypto.randomUUID(),
-        vector,
-        metadata_text: chunks[i].text,
-        metadata_source: filePath,
-      }));
-
-      await this.vectorStore.createTable(this.options.tableName, initialData);
-      this.tableExists = true;
-    } else {
-      // Table exists, use regular upsert
-      await this.vectorStore.upsert({
-        tableName: this.options.tableName,
-        indexName: "vector", // Column name where vectors are stored
-        vectors: embeddings,
-        metadata: chunks.map((chunk) => ({
-          text: chunk.text,
-          source: filePath,
-        })),
+      const { embeddings } = await embedMany({
+        model,
+        values: chunks.map((chunk) => chunk.text),
       });
+
+      // Store embeddings in LanceDB - throws on failure
+      if (!this.vectorStore) {
+        throw new Error("Vector store not initialized");
+      }
+
+      // Delete existing vectors for this file path before inserting new ones
+      await this.deleteExistingVectors(filePath);
+
+      // If table doesn't exist, create it with first batch of data
+      if (!this.tableExists) {
+        const initialData = embeddings.map((vector, i) => ({
+          id: crypto.randomUUID(),
+          vector,
+          metadata_text: chunks[i].text,
+          metadata_source: filePath,
+        }));
+
+        await this.vectorStore.createTable(this.options.tableName, initialData);
+        this.tableExists = true;
+      } else {
+        // Table exists, use regular upsert
+        await this.vectorStore.upsert({
+          tableName: this.options.tableName,
+          indexName: "vector", // Column name where vectors are stored
+          vectors: embeddings,
+          metadata: chunks.map((chunk) => ({
+            text: chunk.text,
+            source: filePath,
+          })),
+        });
+      }
+
+      // Mark as processed
+      this.stateManager.markProcessed(filePath, content, chunks.length);
+      this.stats.filesProcessed++;
+      this.stats.chunksCreated += chunks.length;
+
+      // Add any captured warnings to stats (suppress duplicates from chunking library)
+      if (capturedWarnings.length > 0) {
+        // Only add unique warnings about chunk size issues
+        const chunkWarnings = capturedWarnings.filter(w => w.includes('chunk of size'));
+        if (chunkWarnings.length > 0 && !this.stats.warnings.some(w => w.includes('Chunk size exceeded'))) {
+          this.stats.warnings.push(`Chunk size exceeded in some files (this is usually fine)`);
+        }
+      }
+
+      progressBar.increment();
+    } finally {
+      // Restore original console.warn
+      console.warn = originalWarn;
     }
-
-    // Mark as processed
-    this.stateManager.markProcessed(filePath, content, chunks.length);
-    this.stats.filesProcessed++;
-    this.stats.chunksCreated += chunks.length;
-
-    progressBar.increment();
   }
 
   private async deleteExistingVectors(filePath: string): Promise<void> {
