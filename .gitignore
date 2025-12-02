@@ -1,0 +1,26 @@
+# Embedder output directory
+embeddings/
+*.lancedb/
+
+# Node
+node_modules/
+dist/
+*.log
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# State files
+.embedder-state.json

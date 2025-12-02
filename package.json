@@ -1,0 +1,41 @@
+{
+  "name": "embedder",
+  "version": "1.0.0",
+  "description": "CLI tool to index a git repository by chunking and embedding text files into LanceDB",
+  "main": "dist/index.js",
+  "bin": {
+    "embedder": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "embeddings",
+    "vector-database",
+    "lancedb",
+    "rag",
+    "cli"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@types/cli-progress": "^3.11.6",
+    "@types/node": "^24.10.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^2.0.76",
+    "@mastra/lance": "^0.3.11",
+    "@mastra/rag": "^1.3.6",
+    "ai": "^5.0.106",
+    "chalk": "^5.6.2",
+    "cli-progress": "^3.12.0",
+    "commander": "^14.0.2",
+    "ignore": "^7.0.5"
+  }
+}
