@@ -54,8 +54,16 @@ export class Embedder {
       throw new Error("Vector store not initialized");
     }
 
-    // LanceDB creates indexes automatically when upserting
-    // We just need to ensure the table exists
+    // Check if table exists before creating index
+    const tables = await this.vectorStore.listTables();
+    
+    if (!tables.includes(this.options.tableName)) {
+      // Table doesn't exist yet - it will be created on first upsert
+      // No need to create index yet
+      return;
+    }
+
+    // Table exists, ensure it has an index for better query performance
     try {
       await this.vectorStore.createIndex({
         tableName: this.options.tableName,
@@ -63,7 +71,11 @@ export class Embedder {
         dimension: this.options.dimension,
       });
     } catch (error) {
-      // Index might already exist, which is fine
+      // Index might already exist or other non-critical error
+      // Only log if it's not an "already exists" type error
+      if (error instanceof Error && !error.message.includes("already exists")) {
+        console.warn(`Warning: Could not create index: ${error.message}`);
+      }
     }
   }
 
@@ -217,6 +229,14 @@ export class Embedder {
       return;
     }
 
+    // Check if table exists before trying to delete vectors
+    const tables = await this.vectorStore.listTables();
+    
+    if (!tables.includes(this.options.tableName)) {
+      // Table doesn't exist yet - nothing to delete
+      return;
+    }
+
     try {
       // Delete all vectors matching this source file path using filter
       // This is more efficient than querying first then deleting each individually
@@ -225,8 +245,11 @@ export class Embedder {
         filter: { source: filePath },
       });
     } catch (error) {
-      // If table doesn't exist yet or other errors, just continue
-      // The first upsert will create the table
+      // Log the error but continue processing
+      // This shouldn't fail the entire file processing
+      if (error instanceof Error) {
+        console.warn(`Warning: Could not delete existing vectors for ${filePath}: ${error.message}`);
+      }
     }
   }
 
