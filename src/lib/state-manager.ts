@@ -72,4 +72,15 @@ export class StateManager {
   public getProcessedFiles(): string[] {
     return Object.keys(this.state.files);
   }
+
+  public updateGraphMetadata(
+    nodeCount: number,
+    edgeCount: number
+  ): void {
+    this.state.graphMetadata = {
+      nodeCount,
+      edgeCount,
+      lastGraphUpdate: Date.now(),
+    };
+  }
 }

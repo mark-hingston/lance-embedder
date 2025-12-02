@@ -40,5 +40,6 @@
 
     "moduleResolution": "bundler",
     "esModuleInterop": true,
-  }
+  },
+  "exclude": ["files", "node_modules", "dist"]
 }

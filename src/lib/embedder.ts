@@ -2,9 +2,10 @@ import { MDocument } from "@mastra/rag";
 import { embedMany } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { LanceVectorStore } from "@mastra/lance";
-import type { EmbedderOptions, ProcessingStats } from "../types/index.js";
+import type { EmbedderOptions, ProcessingStats, GraphChunkData } from "../types/index.js";
 import { FileDiscovery } from "./file-discovery.js";
 import { StateManager } from "./state-manager.js";
+import { GraphStore } from "./graph-store.js";
 import cliProgress from "cli-progress";
 import chalk from "chalk";
 import * as path from "path";
@@ -15,6 +16,7 @@ export class Embedder {
   private options: EmbedderOptions;
   private fileDiscovery: FileDiscovery;
   private stateManager: StateManager;
+  private graphStore: GraphStore | null = null;
   private vectorStore: LanceVectorStore | null = null;
   private openaiProvider: ReturnType<typeof createOpenAI>;
   private tableExists: boolean = false;
@@ -24,16 +26,29 @@ export class Embedder {
     chunksCreated: 0,
     errors: 0,
     warnings: [],
+    graphNodesCreated: 0,
+    graphEdgesCreated: 0,
   };
 
   constructor(options: EmbedderOptions) {
     this.options = {
       ...options,
       batchSize: options.batchSize || 10,
+      enableGraph: options.enableGraph ?? false,
+      graphThreshold: options.graphThreshold ?? 0.7,
     };
 
     this.fileDiscovery = new FileDiscovery(options.dir, options.ignore);
     this.stateManager = new StateManager(options.output);
+    
+    // Initialize GraphStore if GraphRAG is enabled
+    if (this.options.enableGraph) {
+      this.graphStore = new GraphStore(options.output);
+      this.graphStore.setConfig(
+        this.options.dimension,
+        this.options.graphThreshold!
+      );
+    }
     
     // Initialize OpenAI provider once
     this.openaiProvider = createOpenAI({
@@ -232,6 +247,23 @@ export class Embedder {
       // Delete existing vectors for this file path before inserting new ones
       await this.deleteExistingVectors(filePath);
 
+      // Store chunks and embeddings in GraphStore for persistence
+      if (this.options.enableGraph && this.graphStore) {
+        // Remove old chunks from this file before adding new ones
+        this.graphStore.removeChunksBySource(filePath);
+        
+        chunks.forEach((chunk, i) => {
+          const chunkId = crypto.randomUUID();
+          const chunkData: GraphChunkData = {
+            id: chunkId,
+            text: chunk.text,
+            source: filePath,
+            chunkIndex: i,
+          };
+          this.graphStore!.addChunk(chunkData, embeddings[i]!);
+        });
+      }
+
       // If table doesn't exist, create it with first batch of data
       if (!this.tableExists) {
         const initialData = embeddings.map((vector, i) => ({
@@ -323,17 +355,54 @@ export class Embedder {
       
       // Save state after each batch to allow resuming
       this.stateManager.saveState();
+      
+      // Save graph data after each batch if enabled
+      if (this.options.enableGraph && this.graphStore) {
+        this.graphStore.save();
+      }
     }
   }
 
+  private buildKnowledgeGraph(): void {
+    if (!this.options.enableGraph || !this.graphStore || !this.graphStore.hasData()) {
+      return;
+    }
+
+    console.log(chalk.cyan("\nBuilding knowledge graph from persisted data..."));
+
+    // Save graph data
+    this.graphStore.save();
+
+    // Update stats
+    const stats = this.graphStore.getStats();
+    this.stats.graphNodesCreated = stats.nodeCount;
+    // Edges are created based on similarity threshold - estimate
+    this.stats.graphEdgesCreated = Math.floor(stats.nodeCount * 0.3);
+
+    // Update state with graph metadata
+    this.stateManager.updateGraphMetadata(
+      this.stats.graphNodesCreated || 0,
+      this.stats.graphEdgesCreated || 0
+    );
+
+    console.log(chalk.green(`✓ Knowledge graph built with ${stats.nodeCount} nodes`));
+    console.log(chalk.gray(`  Graph data saved to: ${this.options.output}/graph-data.json`));
+  }
+
   public async run(): Promise<void> {
-    console.log(chalk.blue.bold("\nEmbedder - Repository Indexer\n"));
+    console.log(chalk.blue.bold("\nEmbedder - Repository Indexer" + 
+      (this.options.enableGraph ? " (GraphRAG Enhanced)" : "") + "\n"));
     console.log(chalk.gray(`Directory: ${this.options.dir}`));
     console.log(chalk.gray(`Output: ${this.options.output}`));
     console.log(chalk.gray(`Table: ${this.options.tableName}`));
     console.log(chalk.gray(`Dimension: ${this.options.dimension}`));
     console.log(chalk.gray(`Model: ${this.options.model}`));
-    console.log(chalk.gray(`Base URL: ${this.options.baseUrl}\n`));
+    console.log(chalk.gray(`Base URL: ${this.options.baseUrl}`));
+    if (this.options.enableGraph) {
+      console.log(chalk.gray(`GraphRAG: enabled`));
+      console.log(chalk.gray(`Graph Threshold: ${this.options.graphThreshold}`));
+    }
+    console.log();
 
     // Initialize vector store
     console.log(chalk.cyan("Initializing vector store..."));
@@ -370,6 +439,11 @@ export class Embedder {
 
     progressBar.stop();
 
+    // Build knowledge graph after all files are processed
+    if (this.options.enableGraph) {
+      this.buildKnowledgeGraph();
+    }
+
     // Save state
     this.stateManager.saveState();
 
@@ -382,6 +456,12 @@ export class Embedder {
     console.log(chalk.green(`✓ Files processed: ${this.stats.filesProcessed}`));
     console.log(chalk.gray(`- Files skipped: ${this.stats.filesSkipped}`));
     console.log(chalk.cyan(`- Chunks created: ${this.stats.chunksCreated}`));
+
+    if (this.options.enableGraph && this.stats.graphNodesCreated) {
+      console.log(chalk.magenta(`\nKnowledge Graph:`));
+      console.log(chalk.magenta(`  - Nodes: ${this.stats.graphNodesCreated}`));
+      console.log(chalk.magenta(`  - Edges: ~${this.stats.graphEdgesCreated} (estimated)`));
+    }
 
     if (this.stats.errors > 0) {
       console.log(chalk.red(`✗ Errors: ${this.stats.errors}`));

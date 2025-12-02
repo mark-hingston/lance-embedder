@@ -8,6 +8,8 @@ A CLI tool to index a git repository by chunking and embedding text files into a
 - **Smart Filtering**: Skips binary files and respects custom ignore patterns
 - **Chunking**: Uses Mastra's recursive chunking strategy for optimal text segmentation
 - **Embedding**: Generates embeddings via LM Studio's OpenAI-compatible API
+- **Vector Storage**: Stores embeddings in LanceDB for fast similarity search
+- **GraphRAG (Optional)**: Build knowledge graphs for relationship-based retrieval
 - **Resume Support**: Tracks processed files and skips unchanged content
 - **Progress Tracking**: Real-time progress bar with colorized output
 - **Error Handling**: Continues processing on errors with detailed warnings
@@ -48,6 +50,8 @@ embedder \
 - `--dimensions <number>` - Embedding dimension size (default: 2560)
 - `-i, --ignore <pattern>` - Glob patterns to ignore (can be specified multiple times)
 - `-b, --batch-size <number>` - Number of embeddings to process in a batch (default: 10)
+- `--enable-graph` - Enable GraphRAG knowledge graph creation (default: false)
+- `--graph-threshold <number>` - Similarity threshold for graph edges, 0.0-1.0 (default: 0.7)
 
 ## Example
 
@@ -63,6 +67,15 @@ embedder \
   -i "*.test.ts" \
   -i "*.spec.ts" \
   -b 20
+
+# With GraphRAG enabled for relationship-based retrieval
+embedder \
+  -d . \
+  -o ./embeddings \
+  -u http://localhost:1234/v1 \
+  -m text-embedding-qwen3-embedding-4b \
+  --enable-graph \
+  --graph-threshold 0.7
 ```
 
 ## How It Works
@@ -99,7 +112,27 @@ The tool displays:
   - Files processed
   - Files skipped (unchanged)
   - Total chunks created
+  - Knowledge graph nodes and edges (if GraphRAG enabled)
   - Errors and warnings
+
+### Output Files
+
+- **LanceDB database** - Vector embeddings stored in the output directory
+- **`.embedder-state.json`** - Processing state for resume functionality
+- **`graph-data/`** - Persisted knowledge graph (if `--enable-graph` is used)
+  - Folder-based storage with batched chunks and binary embeddings
+  - Scalable for large repositories
+
+## GraphRAG
+
+When `--enable-graph` is enabled, the tool creates a knowledge graph in addition to the vector store. This enables relationship-based retrieval for RAG applications.
+
+**See [GRAPHRAG.md](./GRAPHRAG.md) for detailed documentation on:**
+- How GraphRAG works
+- Using the persisted graph data in your applications
+- GraphStore API reference
+- Example RAG workflows
+- Performance considerations
 
 ## Error Handling
 

@@ -47,6 +47,16 @@ program
     "Number of embeddings to process in a batch",
     "10"
   )
+  .option(
+    "--enable-graph",
+    "Enable GraphRAG knowledge graph creation",
+    false
+  )
+  .option(
+    "--graph-threshold <number>",
+    "Similarity threshold for graph edges (0.0-1.0)",
+    "0.7"
+  )
   .action(async (options) => {
     try {
       const embedder = new Embedder({
@@ -58,6 +68,8 @@ program
         dimension: parseInt(options.dimensions, 10),
         ignore: options.ignore,
         batchSize: parseInt(options.batchSize, 10),
+        enableGraph: options.enableGraph,
+        graphThreshold: parseFloat(options.graphThreshold),
       });
 
       await embedder.run();
