@@ -269,8 +269,8 @@ export class Embedder {
         const initialData = embeddings.map((vector, i) => ({
           id: crypto.randomUUID(),
           vector,
-          metadata_text: chunks[i].text,
-          metadata_source: filePath,
+          text: chunks[i].text,
+          source: filePath,
         }));
 
         await this.vectorStore.createTable(this.options.tableName, initialData);
