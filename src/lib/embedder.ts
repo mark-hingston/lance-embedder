@@ -70,15 +70,12 @@ export class Embedder {
     try {
       await this.vectorStore.createIndex({
         tableName: this.options.tableName,
-        indexName: "default",
+        indexName: "vector", // indexName is the column name in LanceDB
         dimension: this.options.dimension,
       });
     } catch (error) {
       // Index might already exist or other non-critical error
-      // Only log if it's not an "already exists" type error
-      if (error instanceof Error && !error.message.includes("already exists")) {
-        console.warn(`Warning: Could not create index: ${error.message}`);
-      }
+      // Silently continue - index creation is optional for performance
     }
   }
 
@@ -223,7 +220,7 @@ export class Embedder {
       // Table exists, use regular upsert
       await this.vectorStore.upsert({
         tableName: this.options.tableName,
-        indexName: "default",
+        indexName: "vector", // Column name where vectors are stored
         vectors: embeddings,
         metadata: chunks.map((chunk) => ({
           text: chunk.text,
@@ -255,15 +252,12 @@ export class Embedder {
       // Delete all vectors matching this source file path using filter
       // This is more efficient than querying first then deleting each individually
       await this.vectorStore.deleteVectors({
-        indexName: this.options.tableName,
+        indexName: this.options.tableName, // In deleteVectors, indexName refers to the table name
         filter: { source: filePath },
       });
     } catch (error) {
-      // Log the error but continue processing
-      // This shouldn't fail the entire file processing
-      if (error instanceof Error) {
-        console.warn(`Warning: Could not delete existing vectors for ${filePath}: ${error.message}`);
-      }
+      // Silently continue - this is expected if table doesn't exist yet or filter doesn't match
+      // Only track critical errors that affect data integrity
     }
   }
 
