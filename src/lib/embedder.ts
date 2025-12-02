@@ -163,9 +163,17 @@ export class Embedder {
   ): Promise<void> {
     // Intercept console output during processing to avoid interfering with progress bar
     const originalWarn = console.warn;
+    const originalLog = console.log;
     const capturedWarnings: string[] = [];
     console.warn = (...args: any[]) => {
       capturedWarnings.push(args.join(' '));
+    };
+    console.log = (...args: any[]) => {
+      // Also intercept console.log to catch chunking warnings
+      const msg = args.join(' ');
+      if (msg.includes('chunk of size')) {
+        capturedWarnings.push(msg);
+      }
     };
 
     try {
@@ -188,8 +196,19 @@ export class Embedder {
         return;
       }
 
-      // Chunk the document
-      const chunks = await this.chunkDocument(content, filePath);
+      // Chunk the document - catch errors and continue
+      let chunks;
+      try {
+        chunks = await this.chunkDocument(content, filePath);
+      } catch (error) {
+        // Log chunking errors as warnings and skip the file
+        this.stats.warnings.push(
+          `Failed to chunk ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+        );
+        this.stats.errors++;
+        progressBar.increment();
+        return;
+      }
 
       if (chunks.length === 0) {
         this.stats.warnings.push(`No chunks generated for ${filePath}`);
@@ -252,9 +271,17 @@ export class Embedder {
       }
 
       progressBar.increment();
+    } catch (error) {
+      // Catch any unexpected errors during processing and continue
+      this.stats.errors++;
+      this.stats.warnings.push(
+        `Error processing ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+      );
+      progressBar.increment();
     } finally {
-      // Restore original console.warn
+      // Restore original console methods
       console.warn = originalWarn;
+      console.log = originalLog;
     }
   }
 
@@ -293,6 +320,9 @@ export class Embedder {
       await Promise.all(
         batch.map((file) => this.processFile(file, progressBar))
       );
+      
+      // Save state after each batch to allow resuming
+      this.stateManager.saveState();
     }
   }
 
