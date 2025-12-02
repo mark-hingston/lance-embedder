@@ -66,6 +66,10 @@ program
         chalk.red.bold("\n✗ Error:"),
         error instanceof Error ? error.message : String(error)
       );
+      if (error instanceof Error && error.stack) {
+        console.error(chalk.gray("\nStack trace:"));
+        console.error(chalk.gray(error.stack));
+      }
       process.exit(1);
     }
   });

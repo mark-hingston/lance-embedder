@@ -9,6 +9,7 @@ import cliProgress from "cli-progress";
 import chalk from "chalk";
 import * as path from "path";
 import * as fs from "fs";
+import * as crypto from "crypto";
 
 export class Embedder {
   private options: EmbedderOptions;
@@ -16,6 +17,7 @@ export class Embedder {
   private stateManager: StateManager;
   private vectorStore: LanceVectorStore | null = null;
   private openaiProvider: ReturnType<typeof createOpenAI>;
+  private tableExists: boolean = false;
   private stats: ProcessingStats = {
     filesProcessed: 0,
     filesSkipped: 0,
@@ -56,8 +58,9 @@ export class Embedder {
 
     // Check if table exists before creating index
     const tables = await this.vectorStore.listTables();
+    this.tableExists = tables.includes(this.options.tableName);
     
-    if (!tables.includes(this.options.tableName)) {
+    if (!this.tableExists) {
       // Table doesn't exist yet - it will be created on first upsert
       // No need to create index yet
       return;
@@ -205,16 +208,29 @@ export class Embedder {
     // Delete existing vectors for this file path before inserting new ones
     await this.deleteExistingVectors(filePath);
 
-    await this.vectorStore.upsert({
-      tableName: this.options.tableName,
-      indexName: "default",
-      vectors: embeddings,
-      metadata: chunks.map((chunk) => ({
-        text: chunk.text,
-        source: filePath,
-        ...chunk.metadata,
-      })),
-    });
+    // If table doesn't exist, create it with first batch of data
+    if (!this.tableExists) {
+      const initialData = embeddings.map((vector, i) => ({
+        id: crypto.randomUUID(),
+        vector,
+        metadata_text: chunks[i].text,
+        metadata_source: filePath,
+      }));
+
+      await this.vectorStore.createTable(this.options.tableName, initialData);
+      this.tableExists = true;
+    } else {
+      // Table exists, use regular upsert
+      await this.vectorStore.upsert({
+        tableName: this.options.tableName,
+        indexName: "default",
+        vectors: embeddings,
+        metadata: chunks.map((chunk) => ({
+          text: chunk.text,
+          source: filePath,
+        })),
+      });
+    }
 
     // Mark as processed
     this.stateManager.markProcessed(filePath, content, chunks.length);
@@ -230,9 +246,7 @@ export class Embedder {
     }
 
     // Check if table exists before trying to delete vectors
-    const tables = await this.vectorStore.listTables();
-    
-    if (!tables.includes(this.options.tableName)) {
+    if (!this.tableExists) {
       // Table doesn't exist yet - nothing to delete
       return;
     }
