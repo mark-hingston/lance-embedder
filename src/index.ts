@@ -22,7 +22,7 @@ program
   )
   .requiredOption(
     "-m, --model <name>",
-    "Embedding model name (e.g., text-embedding-qwen3-embedding-4b)"
+    "Embedding model name (e.g., text-embedding-qwen3-embedding-0.6b)"
   )
   .option(
     "-t, --table-name <name>",
@@ -32,7 +32,7 @@ program
   .option(
     "--dimensions <number>",
     "Embedding dimension size",
-    "2560"
+    "1024"
   )
   .option(
     "-i, --ignore <pattern>",

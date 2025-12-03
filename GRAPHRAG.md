@@ -118,12 +118,12 @@ graphStore.getStats();
 
 // Get configuration
 graphStore.getConfig(); 
-// { dimension: 2560, threshold: 0.7 }
+// { dimension: 1024, threshold: 0.7 }
 
 // Build GraphRAG instance
 const graphRag = graphStore.buildGraphRAG();
 // or with overrides:
-const graphRag = graphStore.buildGraphRAG(2560, 0.8);
+const graphRag = graphStore.buildGraphRAG(1024, 0.8);
 ```
 
 ### Accessing Raw Data
@@ -205,7 +205,7 @@ async function answerQuestion(question: string) {
 **Folder-based storage is highly efficient:**
 - Chunks stored as JSON batches (1000 chunks per file)
 - Embeddings stored as binary (Float32Array format)
-- Example for 10k chunks with 2560-dim embeddings:
+- Example for 10k chunks with 1024-dim embeddings:
   - Old approach: ~100MB single JSON file
   - New approach: ~40MB binary embeddings + ~20MB JSON chunks
   - 40% smaller + faster to load

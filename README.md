@@ -34,7 +34,7 @@ embedder \
   --dir /path/to/repository \
   --output /path/to/lancedb \
   --base-url http://localhost:1234/v1 \
-  --model text-embedding-qwen3-embedding-4b
+  --model text-embedding-qwen3-embedding-0.6b
 ```
 
 ### Required Options
@@ -42,12 +42,12 @@ embedder \
 - `-d, --dir <path>` - Directory to index (the git repository)
 - `-o, --output <path>` - Output path for LanceDB database
 - `-u, --base-url <url>` - Base URL for LM Studio (e.g., http://localhost:1234/v1)
-- `-m, --model <name>` - Embedding model name (e.g., text-embedding-qwen3-embedding-4b)
+- `-m, --model <name>` - Embedding model name (e.g., text-embedding-qwen3-embedding-0.6b)
 
 ### Optional Options
 
 - `-t, --table-name <name>` - LanceDB table name (default: embeddings)
-- `--dimensions <number>` - Embedding dimension size (default: 2560)
+- `--dimensions <number>` - Embedding dimension size (default: 1024)
 - `-i, --ignore <pattern>` - Glob patterns to ignore (can be specified multiple times)
 - `-b, --batch-size <number>` - Number of embeddings to process in a batch (default: 10)
 - `--enable-graph` - Enable GraphRAG knowledge graph creation (default: false)
@@ -61,7 +61,7 @@ embedder \
   -d . \
   -o ./embeddings \
   -u http://localhost:1234/v1 \
-  -m text-embedding-qwen3-embedding-4b \
+  -m text-embedding-qwen3-embedding-0.6b \
   -t my_embeddings \
   --dimensions 768 \
   -i "*.test.ts" \
@@ -73,7 +73,7 @@ embedder \
   -d . \
   -o ./embeddings \
   -u http://localhost:1234/v1 \
-  -m text-embedding-qwen3-embedding-4b \
+  -m text-embedding-qwen3-embedding-0.6b \
   --enable-graph \
   --graph-threshold 0.7
 ```

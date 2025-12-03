@@ -112,8 +112,8 @@ File-type specific strategies are automatically selected:
 - **Database**: LanceDB
 - **Table**: Configurable via `--table-name` (default: embeddings)
 - **Index**: default
-- **Dimension**: Configurable via `--dimensions` (default: 2560)
-  - Common dimensions: 384, 768, 1024, 1536, 2560, 3072
+- **Dimension**: Configurable via `--dimensions` (default: 1024)
+  - Common dimensions: 384, 768, 1024, 1536, 1024, 3072
   - Must match your embedding model's output dimension
 
 ## Metadata Stored

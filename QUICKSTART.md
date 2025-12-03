@@ -17,7 +17,7 @@ npm run build
 ### 3. Set Up LM Studio
 
 1. Download and install [LM Studio](https://lmstudio.ai/)
-2. Load an embedding model (recommended: `text-embedding-qwen3-embedding-4b`)
+2. Load an embedding model (recommended: `text-embedding-qwen3-embedding-0.6b`)
 3. Start the local server (usually `http://localhost:1234`)
 
 ## Basic Usage
@@ -29,7 +29,7 @@ node dist/index.js \
   --dir /path/to/your/repo \
   --output ./embeddings \
   --base-url http://localhost:1234/v1 \
-  --model text-embedding-qwen3-embedding-4b
+  --model text-embedding-qwen3-embedding-0.6b
 ```
 
 ### Using Short Options
@@ -39,7 +39,7 @@ node dist/index.js \
   -d /path/to/your/repo \
   -o ./embeddings \
   -u http://localhost:1234/v1 \
-  -m text-embedding-qwen3-embedding-4b
+  -m text-embedding-qwen3-embedding-0.6b
 ```
 
 ## Common Use Cases
@@ -47,7 +47,7 @@ node dist/index.js \
 ### 1. Index Current Directory
 
 ```bash
-node dist/index.js -d . -o ./embeddings -u http://localhost:1234/v1 -m text-embedding-qwen3-embedding-4b
+node dist/index.js -d . -o ./embeddings -u http://localhost:1234/v1 -m text-embedding-qwen3-embedding-0.6b
 ```
 
 ### 2. Ignore Test Files
@@ -57,7 +57,7 @@ node dist/index.js \
   -d . \
   -o ./embeddings \
   -u http://localhost:1234/v1 \
-  -m text-embedding-qwen3-embedding-4b \
+  -m text-embedding-qwen3-embedding-0.6b \
   -i "*.test.ts" \
   -i "*.spec.ts"
 ```
@@ -69,7 +69,7 @@ node dist/index.js \
   -d . \
   -o ./embeddings \
   -u http://localhost:1234/v1 \
-  -m text-embedding-qwen3-embedding-4b \
+  -m text-embedding-qwen3-embedding-0.6b \
   -t my_project \
   -b 20
 ```
@@ -79,7 +79,7 @@ node dist/index.js \
 ### Run Without Building
 
 ```bash
-npm run dev -- -d . -o ./embeddings -u http://localhost:1234/v1 -m text-embedding-qwen3-embedding-4b
+npm run dev -- -d . -o ./embeddings -u http://localhost:1234/v1 -m text-embedding-qwen3-embedding-0.6b
 ```
 
 ### After Making Changes
@@ -107,8 +107,8 @@ Embedder - Repository Indexer
 Directory: /path/to/repo
 Output: ./embeddings
 Table: embeddings
-Dimension: 2560
-Model: text-embedding-qwen3-embedding-4b
+Dimension: 1024
+Model: text-embedding-qwen3-embedding-0.6b
 Base URL: http://localhost:1234/v1
 
 Initializing vector store...

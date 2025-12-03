@@ -3,7 +3,7 @@
 ## Prerequisites
 
 1. Install and run LM Studio
-2. Load an embedding model in LM Studio (recommended: `text-embedding-qwen3-embedding-4b`)
+2. Load an embedding model in LM Studio (recommended: `text-embedding-qwen3-embedding-0.6b`)
 3. Start the local server in LM Studio (usually runs on `http://localhost:1234`)
 
 ## Basic Usage
@@ -17,7 +17,7 @@ node dist/index.js \
   --dir /path/to/your/repository \
   --output ./my-embeddings \
   --base-url http://localhost:1234/v1 \
-  --model text-embedding-qwen3-embedding-4b
+  --model text-embedding-qwen3-embedding-0.6b
 ```
 
 ## Development Mode
@@ -28,7 +28,7 @@ npm run dev -- \
   --dir /path/to/your/repository \
   --output ./my-embeddings \
   --base-url http://localhost:1234/v1 \
-  --model text-embedding-qwen3-embedding-4b
+  --model text-embedding-qwen3-embedding-0.6b
 ```
 
 ## Advanced Examples
@@ -40,7 +40,7 @@ node dist/index.js \
   -d ./my-project \
   -o ./embeddings \
   -u http://localhost:1234/v1 \
-  -m text-embedding-qwen3-embedding-4b \
+  -m text-embedding-qwen3-embedding-0.6b \
   -t project_docs \
   --ignore "*.test.ts" \
   --ignore "*.spec.ts" \
@@ -55,7 +55,7 @@ node dist/index.js \
   -d . \
   -o ./embeddings \
   -u http://localhost:1234/v1 \
-  -m text-embedding-qwen3-embedding-4b
+  -m text-embedding-qwen3-embedding-0.6b
 ```
 
 ## Expected Output
@@ -66,8 +66,8 @@ Embedder - Repository Indexer
 Directory: /path/to/repository
 Output: ./embeddings
 Table: embeddings
-Dimension: 2560
-Model: text-embedding-qwen3-embedding-4b
+Dimension: 1024
+Model: text-embedding-qwen3-embedding-0.6b
 Base URL: http://localhost:1234/v1
 
 Initializing vector store...
@@ -115,7 +115,7 @@ These warnings are normal and don't indicate a problem.
 ### Setting the Right Dimension
 
 The `--dimensions` parameter must match your embedding model's output:
-- **text-embedding-qwen3-embedding-4b**: 2560 dimensions (default)
+- **text-embedding-qwen3-embedding-0.6b**: 1024 dimensions (default)
 - **nomic-embed-text-v1.5**: 768 dimensions
 - **text-embedding-3-small**: 1536 dimensions
 - **text-embedding-3-large**: 3072 dimensions
