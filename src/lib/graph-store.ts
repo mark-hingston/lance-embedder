@@ -11,6 +11,7 @@ const EMBEDDINGS_DIR = "embeddings";
 const CONFIG_FILE = "config.json";
 const INDEX_FILE = "index.json";
 const BATCH_SIZE = 1000; // Chunks per batch file
+const MAX_CACHED_BATCHES = 5; // Maximum batches to keep in memory (5000 chunks max)
 
 interface GraphConfig {
   version: string;
@@ -63,6 +64,7 @@ export class GraphStore {
   // In-memory cache of chunks (loaded on demand)
   private chunksCache: Map<number, GraphChunkData[]> = new Map();
   private embeddingsCache: Map<number, number[][]> = new Map();
+  private cacheAccessOrder: number[] = []; // Track LRU for cache eviction
 
   constructor(outputDir: string) {
     this.graphDir = path.join(outputDir, GRAPH_DIR);
@@ -185,7 +187,7 @@ export class GraphStore {
     try {
       const content = fs.readFileSync(batchPath, "utf-8");
       const batch = JSON.parse(content) as ChunkBatch;
-      // Don't cache yet - return the loaded data
+      // Don't cache yet - caller will cache after modification
       return batch.chunks;
     } catch (error) {
       console.warn(`Failed to load chunk batch ${batchNum}`);
@@ -278,6 +280,39 @@ export class GraphStore {
   }
 
   /**
+   * Evict old batches from cache if we exceed MAX_CACHED_BATCHES
+   * This prevents memory leaks when processing many files
+   */
+  private evictOldCaches(keepBatchNum: number): void {
+    const totalCached = this.chunksCache.size;
+    
+    if (totalCached >= MAX_CACHED_BATCHES) {
+      // Find batch numbers to evict (all except the one we want to keep)
+      const batchNums = Array.from(this.chunksCache.keys()).filter(n => n !== keepBatchNum);
+      
+      // Evict oldest batches first
+      const toEvict = batchNums.slice(0, Math.max(0, totalCached - MAX_CACHED_BATCHES + 1));
+      
+      for (const batchNum of toEvict) {
+        // Flush to disk before evicting
+        const chunks = this.chunksCache.get(batchNum);
+        const embeddings = this.embeddingsCache.get(batchNum);
+        
+        if (chunks) {
+          this.saveChunkBatch(batchNum, chunks);
+        }
+        if (embeddings) {
+          this.saveEmbeddingBatch(batchNum, embeddings);
+        }
+        
+        // Remove from cache
+        this.chunksCache.delete(batchNum);
+        this.embeddingsCache.delete(batchNum);
+      }
+    }
+  }
+
+  /**
    * Update configuration (dimension and threshold)
    */
   public setConfig(dimension: number, threshold: number): void {
@@ -294,6 +329,9 @@ export class GraphStore {
   public addChunk(chunk: GraphChunkData, embedding: number[]): void {
     const globalIndex = this.index.chunkCount;
     const batchNum = this.getBatchNumber(globalIndex);
+    
+    // Evict old caches before loading new batch
+    this.evictOldCaches(batchNum);
     
     // Get current batch (either from cache or load from disk)
     let chunks = this.loadChunkBatch(batchNum);
@@ -373,18 +411,28 @@ export class GraphStore {
    * Save any pending changes (flushes all cached batches to disk)
    */
   public save(): void {
-    // Flush all cached batches
-    for (const [batchNum, chunks] of this.chunksCache.entries()) {
-      this.saveChunkBatch(batchNum, chunks);
-    }
+    // Flush all cached batches to disk
+    const batchNums = Array.from(this.chunksCache.keys());
     
-    for (const [batchNum, embeddings] of this.embeddingsCache.entries()) {
-      this.saveEmbeddingBatch(batchNum, embeddings);
+    for (const batchNum of batchNums) {
+      const chunks = this.chunksCache.get(batchNum);
+      const embeddings = this.embeddingsCache.get(batchNum);
+      
+      if (chunks) {
+        this.saveChunkBatch(batchNum, chunks);
+      }
+      if (embeddings) {
+        this.saveEmbeddingBatch(batchNum, embeddings);
+      }
     }
     
     // Update timestamps and save metadata
     this.saveConfig();
     this.saveIndex();
+    
+    // Clear caches after save to free memory
+    this.chunksCache.clear();
+    this.embeddingsCache.clear();
   }
 
   /**
