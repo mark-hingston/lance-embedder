@@ -10,6 +10,9 @@ export interface EmbedderOptions {
   // GraphRAG options
   enableGraph?: boolean;
   graphThreshold?: number;
+  // Diff mode options
+  mode?: 'full' | 'diff' | 'intelligent';
+  fromCommit?: string;
 }
 
 export interface ProcessedFile {
@@ -22,6 +25,7 @@ export interface ProcessedFile {
 export interface StateFile {
   files: Record<string, ProcessedFile>;
   lastUpdated: number;
+  lastCommitHash?: string;
   // Track graph metadata
   graphMetadata?: {
     nodeCount: number;
@@ -36,6 +40,13 @@ export interface ProcessingStats {
   chunksCreated: number;
   errors: number;
   warnings: string[];
+  // Diff mode stats
+  filesAdded?: number;
+  filesModified?: number;
+  filesDeleted?: number;
+  indexMode: 'full' | 'diff';
+  fromCommit?: string;
+  toCommit?: string;
   // GraphRAG stats
   graphNodesCreated?: number;
   graphEdgesCreated?: number;
@@ -68,4 +79,15 @@ export interface PersistedGraphData {
   };
   chunks: GraphChunkData[];
   embeddings: GraphEmbeddingData[];
+}
+
+/**
+ * Git diff result structure
+ * Contains lists of files that were added, modified, deleted, or renamed
+ */
+export interface GitDiffResult {
+  added: string[];
+  modified: string[];
+  deleted: string[];
+  renamed: Array<{ from: string; to: string }>;
 }

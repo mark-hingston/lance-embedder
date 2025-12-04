@@ -6,6 +6,7 @@ import type { EmbedderOptions, ProcessingStats, GraphChunkData } from "../types/
 import { FileDiscovery } from "./file-discovery.js";
 import { StateManager } from "./state-manager.js";
 import { GraphStore } from "./graph-store.js";
+import { isGitRepository, getCurrentCommitHash, getChangedFiles, hasUncommittedChanges, getUncommittedChangeCount } from "./git-diff.js";
 import cliProgress from "cli-progress";
 import chalk from "chalk";
 import * as path from "path";
@@ -26,6 +27,7 @@ export class Embedder {
     chunksCreated: 0,
     errors: 0,
     warnings: [],
+    indexMode: 'full',
     graphNodesCreated: 0,
     graphEdgesCreated: 0,
   };
@@ -36,7 +38,11 @@ export class Embedder {
       batchSize: options.batchSize || 10,
       enableGraph: options.enableGraph ?? false,
       graphThreshold: options.graphThreshold ?? 0.7,
+      mode: options.mode || 'full',
     };
+
+    // Set initial index mode in stats
+    this.stats.indexMode = this.options.mode === 'diff' ? 'diff' : 'full';
 
     this.fileDiscovery = new FileDiscovery(options.dir, options.ignore);
     this.stateManager = new StateManager(options.output);
@@ -390,6 +396,24 @@ export class Embedder {
   }
 
   public async run(): Promise<void> {
+    const mode = this.options.mode || 'full';
+    
+    switch (mode) {
+      case 'full':
+        await this.runFull();
+        break;
+      case 'diff':
+        await this.runDiff();
+        break;
+      case 'intelligent':
+        await this.runIntelligent();
+        break;
+      default:
+        throw new Error(`Invalid mode: ${mode}. Valid modes: full, diff, intelligent`);
+    }
+  }
+
+  private async runFull(): Promise<void> {
     console.log(chalk.blue.bold("\nEmbedder - Repository Indexer" + 
       (this.options.enableGraph ? " (GraphRAG Enhanced)" : "") + "\n"));
     console.log(chalk.gray(`Directory: ${this.options.dir}`));
@@ -444,6 +468,14 @@ export class Embedder {
       this.buildKnowledgeGraph();
     }
 
+    // Save commit hash if in a git repository
+    if (isGitRepository(this.options.dir)) {
+      const currentCommit = getCurrentCommitHash(this.options.dir);
+      if (currentCommit) {
+        this.stateManager.setLastCommitHash(currentCommit);
+      }
+    }
+
     // Save state
     this.stateManager.saveState();
 
@@ -451,10 +483,246 @@ export class Embedder {
     this.printSummary();
   }
 
+  private async runIntelligent(): Promise<void> {
+    // Check if git repository
+    if (!isGitRepository(this.options.dir)) {
+      console.log(chalk.yellow("Not a git repository, using full indexing mode"));
+      return this.runFull();
+    }
+
+    // Check if we have a last commit hash
+    const lastCommit = this.stateManager.getLastCommitHash();
+    if (!lastCommit) {
+      console.log(chalk.yellow("No previous commit found, using full indexing mode"));
+      return this.runFull();
+    }
+
+    // Check if current commit differs
+    const currentCommit = getCurrentCommitHash(this.options.dir);
+    if (!currentCommit) {
+      console.log(chalk.yellow("Cannot determine current commit, using full indexing mode"));
+      return this.runFull();
+    }
+
+    if (lastCommit === currentCommit) {
+      console.log(chalk.green("✓ Already indexed at commit " + currentCommit.substring(0, 7)));
+      return;
+    }
+
+    // Use diff mode
+    console.log(chalk.cyan("Auto-detected changes, using diff mode"));
+    return this.runDiff();
+  }
+
+  private async runDiff(): Promise<void> {
+    // Initialize stats for diff mode
+    this.stats.indexMode = 'diff';
+    this.stats.filesAdded = 0;
+    this.stats.filesModified = 0;
+    this.stats.filesDeleted = 0;
+
+    // Validate git repository
+    if (!isGitRepository(this.options.dir)) {
+      throw new Error(
+        `Diff mode requires a git repository\n` +
+        `Directory: ${this.options.dir} is not a git repository\n\n` +
+        `Suggestions:\n` +
+        `  • Use --mode full for non-git directories\n` +
+        `  • Initialize git: git init\n` +
+        `  • Use --mode intelligent to auto-detect`
+      );
+    }
+
+    // Get commit range
+    const fromCommit = this.options.fromCommit || this.stateManager.getLastCommitHash();
+    if (!fromCommit) {
+      console.log(chalk.yellow("Warning: No previous commit hash found"));
+      console.log(chalk.yellow("Falling back to full indexing mode for initial setup"));
+      return this.runFull();
+    }
+
+    const toCommit = getCurrentCommitHash(this.options.dir);
+    if (!toCommit) {
+      throw new Error("Cannot determine current commit hash");
+    }
+
+    this.stats.fromCommit = fromCommit;
+    this.stats.toCommit = toCommit;
+
+    // Check for uncommitted changes
+    if (hasUncommittedChanges(this.options.dir)) {
+      const changeCount = getUncommittedChangeCount(this.options.dir);
+      console.log(chalk.yellow(`\nWarning: ${changeCount} uncommitted change(s) detected`));
+      console.log(chalk.yellow("Diff mode only indexes committed changes"));
+      console.log(chalk.gray("Run 'git status' for details\n"));
+    }
+
+    // Get changed files
+    const diff = getChangedFiles(this.options.dir, fromCommit, toCommit);
+
+    // Print header
+    console.log(chalk.blue.bold("\nDiff-based Indexing" + 
+      (this.options.enableGraph ? " (GraphRAG Enhanced)" : "") + "\n"));
+    console.log(chalk.gray(`From commit: ${fromCommit.substring(0, 7)}`));
+    console.log(chalk.gray(`To commit:   ${toCommit.substring(0, 7)}`));
+    console.log(chalk.gray(`Directory:   ${this.options.dir}`));
+    console.log(chalk.gray(`Output:      ${this.options.output}`));
+
+    // Print change summary
+    const totalChanges = diff.added.length + diff.modified.length + 
+                         diff.deleted.length + diff.renamed.length;
+    
+    if (totalChanges === 0) {
+      console.log(chalk.green("\n✓ No changes detected, index is up to date"));
+      return;
+    }
+
+    console.log(chalk.cyan(`\nChanges detected:`));
+    if (diff.added.length > 0) {
+      console.log(chalk.green(`  + ${diff.added.length} file(s) added`));
+    }
+    if (diff.modified.length > 0) {
+      console.log(chalk.yellow(`  ~ ${diff.modified.length} file(s) modified`));
+    }
+    if (diff.deleted.length > 0) {
+      console.log(chalk.red(`  - ${diff.deleted.length} file(s) deleted`));
+    }
+    if (diff.renamed.length > 0) {
+      console.log(chalk.blue(`  ↔ ${diff.renamed.length} file(s) renamed`));
+    }
+    console.log();
+
+    // Initialize vector store
+    console.log(chalk.cyan("Initializing vector store..."));
+    await this.initVectorStore();
+    await this.ensureIndex();
+
+    // Process added and modified files
+    const filesToProcess = [...diff.added, ...diff.modified];
+    
+    if (filesToProcess.length > 0) {
+      console.log(chalk.cyan(`Processing ${filesToProcess.length} changed file(s)...\n`));
+
+      const progressBar = new cliProgress.SingleBar({
+        format: chalk.cyan("{bar}") + " | {percentage}% | {value}/{total} files | ETA: {eta}s",
+        barCompleteChar: "\u2588",
+        barIncompleteChar: "\u2591",
+        hideCursor: true,
+      }, cliProgress.Presets.shades_classic);
+
+      progressBar.start(filesToProcess.length, 0);
+      await this.processBatch(filesToProcess, progressBar);
+      progressBar.stop();
+
+      this.stats.filesAdded = diff.added.length;
+      this.stats.filesModified = diff.modified.length;
+    }
+
+    // Handle renamed files (treat as delete + add)
+    if (diff.renamed.length > 0) {
+      console.log(chalk.cyan(`\nProcessing ${diff.renamed.length} renamed file(s)...`));
+      
+      // Delete old paths
+      for (const {from, to} of diff.renamed) {
+        await this.deleteFileVectors([from]);
+        this.stateManager.removeFile(from);
+        if (this.graphStore) {
+          this.graphStore.removeChunksBySource(from);
+        }
+      }
+      
+      // Process new paths
+      const renamedToPaths = diff.renamed.map(r => r.to);
+      if (renamedToPaths.length > 0) {
+        const progressBar = new cliProgress.SingleBar({
+          format: chalk.cyan("{bar}") + " | {percentage}% | {value}/{total} files | ETA: {eta}s",
+          barCompleteChar: "\u2588",
+          barIncompleteChar: "\u2591",
+          hideCursor: true,
+        }, cliProgress.Presets.shades_classic);
+
+        progressBar.start(renamedToPaths.length, 0);
+        await this.processBatch(renamedToPaths, progressBar);
+        progressBar.stop();
+      }
+    }
+
+    // Delete removed files
+    if (diff.deleted.length > 0) {
+      console.log(chalk.cyan(`\nCleaning up ${diff.deleted.length} deleted file(s)...`));
+      await this.deleteFileVectors(diff.deleted);
+      
+      // Remove from state
+      for (const filePath of diff.deleted) {
+        this.stateManager.removeFile(filePath);
+      }
+      
+      // Remove from graph store
+      if (this.graphStore) {
+        for (const filePath of diff.deleted) {
+          this.graphStore.removeChunksBySource(filePath);
+        }
+      }
+      
+      this.stats.filesDeleted = diff.deleted.length;
+      console.log(chalk.green(`✓ Deleted vectors for ${diff.deleted.length} file(s)`));
+    }
+
+    // Build knowledge graph if enabled
+    if (this.options.enableGraph) {
+      this.buildKnowledgeGraph();
+    }
+
+    // Update state with new commit hash (ONLY after everything succeeds)
+    this.stateManager.setLastCommitHash(toCommit);
+    this.stateManager.saveState();
+
+    // Print summary
+    this.printSummary();
+  }
+
+  private async deleteFileVectors(filePaths: string[]): Promise<void> {
+    if (!this.vectorStore || filePaths.length === 0) {
+      return;
+    }
+
+    if (!this.tableExists) {
+      return; // Nothing to delete if table doesn't exist
+    }
+
+    try {
+      for (const filePath of filePaths) {
+        await this.vectorStore.deleteVectors({
+          indexName: this.options.tableName,
+          filter: { source: filePath },
+        });
+      }
+    } catch (error) {
+      // Log warning but continue (deletion is best-effort)
+      console.warn(chalk.yellow(`Warning: Failed to delete some vectors: ${error instanceof Error ? error.message : String(error)}`));
+    }
+  }
+
   private printSummary(): void {
     console.log(chalk.blue.bold("\n\nSummary:\n"));
-    console.log(chalk.green(`✓ Files processed: ${this.stats.filesProcessed}`));
-    console.log(chalk.gray(`- Files skipped: ${this.stats.filesSkipped}`));
+    
+    if (this.stats.indexMode === 'diff') {
+      console.log(chalk.cyan(`Mode: Diff (${this.stats.fromCommit?.substring(0, 7)} → ${this.stats.toCommit?.substring(0, 7)})`));
+      if (this.stats.filesAdded) {
+        console.log(chalk.green(`✓ Files added: ${this.stats.filesAdded}`));
+      }
+      if (this.stats.filesModified) {
+        console.log(chalk.yellow(`✓ Files modified: ${this.stats.filesModified}`));
+      }
+      if (this.stats.filesDeleted) {
+        console.log(chalk.red(`✓ Files deleted: ${this.stats.filesDeleted}`));
+      }
+    } else {
+      console.log(chalk.cyan(`Mode: Full indexing`));
+      console.log(chalk.green(`✓ Files processed: ${this.stats.filesProcessed}`));
+      console.log(chalk.gray(`- Files skipped: ${this.stats.filesSkipped}`));
+    }
+    
     console.log(chalk.cyan(`- Chunks created: ${this.stats.chunksCreated}`));
 
     if (this.options.enableGraph && this.stats.graphNodesCreated) {

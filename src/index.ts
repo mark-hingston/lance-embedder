@@ -57,8 +57,30 @@ program
     "Similarity threshold for graph edges (0.0-1.0)",
     "0.7"
   )
+  .option(
+    "--mode <type>",
+    "Indexing mode: 'full' (complete re-index), 'diff' (incremental based on git), 'intelligent' (auto-detect)",
+    "full"
+  )
+  .option(
+    "--from-commit <hash>",
+    "Git commit hash to diff from (overrides stored state, only used with --mode diff)"
+  )
   .action(async (options) => {
     try {
+      // Validate mode
+      const validModes = ['full', 'diff', 'intelligent'];
+      if (!validModes.includes(options.mode)) {
+        console.error(chalk.red.bold("\n✗ Error:"), `Invalid mode '${options.mode}'`);
+        console.error(chalk.gray(`Valid modes: ${validModes.join(', ')}`));
+        process.exit(1);
+      }
+
+      // Warn if --from-commit used without diff mode
+      if (options.fromCommit && options.mode !== 'diff') {
+        console.warn(chalk.yellow("\nWarning: --from-commit is only used with --mode diff (ignored)\n"));
+      }
+
       const embedder = new Embedder({
         dir: options.dir,
         output: options.output,
@@ -70,6 +92,8 @@ program
         batchSize: parseInt(options.batchSize, 10),
         enableGraph: options.enableGraph,
         graphThreshold: parseFloat(options.graphThreshold),
+        mode: options.mode,
+        fromCommit: options.fromCommit,
       });
 
       await embedder.run();

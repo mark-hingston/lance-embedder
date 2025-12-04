@@ -83,4 +83,20 @@ export class StateManager {
       lastGraphUpdate: Date.now(),
     };
   }
+
+  public getLastCommitHash(): string | null {
+    return this.state.lastCommitHash || null;
+  }
+
+  public setLastCommitHash(commitHash: string): void {
+    this.state.lastCommitHash = commitHash;
+  }
+
+  public removeFile(filePath: string): void {
+    delete this.state.files[filePath];
+  }
+
+  public getFileCount(): number {
+    return Object.keys(this.state.files).length;
+  }
 }

@@ -6,6 +6,8 @@ A CLI tool to index a git repository by chunking and embedding text files into a
 
 - **File Discovery**: Scans directories recursively with .gitignore support
 - **Smart Filtering**: Skips binary files and respects custom ignore patterns
+- **Incremental Indexing**: Git-based diff mode for fast updates (only process changed files)
+- **Intelligent Mode**: Auto-detects best indexing strategy (full vs diff)
 - **Chunking**: Uses Mastra's recursive chunking strategy for optimal text segmentation
 - **Embedding**: Generates embeddings via LM Studio's OpenAI-compatible API
 - **Vector Storage**: Stores embeddings in LanceDB for fast similarity search
@@ -50,8 +52,67 @@ embedder \
 - `--dimensions <number>` - Embedding dimension size (default: 1024)
 - `-i, --ignore <pattern>` - Glob patterns to ignore (can be specified multiple times)
 - `-b, --batch-size <number>` - Number of embeddings to process in a batch (default: 10)
+- `--mode <type>` - Indexing mode: 'full' (complete re-index), 'diff' (incremental), 'intelligent' (auto-detect) (default: full)
+- `--from-commit <hash>` - Git commit hash to diff from (overrides stored state, only used with --mode diff)
 - `--enable-graph` - Enable GraphRAG knowledge graph creation (default: false)
 - `--graph-threshold <number>` - Similarity threshold for graph edges, 0.0-1.0 (default: 0.7)
+
+## Indexing Modes
+
+### Full Mode (Default)
+Complete indexing of all files. Uses content hashing to skip unchanged files.
+
+```bash
+embedder \
+  -d . \
+  -o ./embeddings \
+  -u http://localhost:1234/v1 \
+  -m text-embedding-qwen3-embedding-0.6b \
+  --mode full
+```
+
+### Diff Mode (Incremental)
+Only processes files that changed in git since last index. **Much faster** for updates.
+
+```bash
+embedder \
+  -d . \
+  -o ./embeddings \
+  -u http://localhost:1234/v1 \
+  -m text-embedding-qwen3-embedding-0.6b \
+  --mode diff
+```
+
+**Requirements:**
+- Git repository
+- Previous index with stored commit hash
+- Only indexes committed changes (warns about uncommitted files)
+
+**Features:**
+- Processes added files ✓
+- Processes modified files ✓
+- Removes deleted files from index ✓
+- Handles renamed files (delete old + add new) ✓
+
+### Intelligent Mode (Recommended)
+Automatically chooses the best mode based on context.
+
+```bash
+embedder \
+  -d . \
+  -o ./embeddings \
+  -u http://localhost:1234/v1 \
+  -m text-embedding-qwen3-embedding-0.6b \
+  --mode intelligent
+```
+
+**Decision Logic:**
+1. Not a git repo? → Use full mode
+2. No previous commit hash? → Use full mode (first run)
+3. Commit hash unchanged? → Already indexed, skip
+4. Otherwise → Use diff mode
+
+**Best for:** CI/CD pipelines, automated scripts, scheduled jobs
 
 ## Example
 
@@ -67,6 +128,14 @@ embedder \
   -i "*.test.ts" \
   -i "*.spec.ts" \
   -b 20
+
+# Incremental indexing with diff mode
+embedder \
+  -d . \
+  -o ./embeddings \
+  -u http://localhost:1234/v1 \
+  -m text-embedding-qwen3-embedding-0.6b \
+  --mode diff
 
 # With GraphRAG enabled for relationship-based retrieval
 embedder \
@@ -99,8 +168,14 @@ The tool creates a `.embedder-state.json` file in the output directory to track:
 - Content hashes
 - Number of chunks per file
 - Processing timestamps
+- Last indexed git commit hash (for diff mode)
 
 This enables resume functionality - on subsequent runs, only new or modified files are processed.
+
+**Diff mode benefits:**
+- Uses git commit history instead of scanning all files
+- Automatically removes deleted files from the index
+- Tracks the exact commit that was last indexed
 
 ## Output
 
