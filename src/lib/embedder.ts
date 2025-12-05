@@ -255,8 +255,11 @@ export class Embedder {
 
       // Store chunks and embeddings in GraphStore for persistence
       if (this.options.enableGraph && this.graphStore) {
-        // Remove old chunks from this file before adding new ones
-        this.graphStore.removeChunksBySource(filePath);
+        // Only remove old chunks if this file already has chunks
+        // This avoids expensive lookups for new files
+        if (this.graphStore.hasChunksForSource(filePath)) {
+          this.graphStore.removeChunksBySource(filePath);
+        }
         
         chunks.forEach((chunk, i) => {
           const chunkId = crypto.randomUUID();
@@ -362,8 +365,9 @@ export class Embedder {
       // Save state after each batch to allow resuming
       this.stateManager.saveState();
       
-      // Save graph data after each batch if enabled
-      if (this.options.enableGraph && this.graphStore) {
+      // Save graph data periodically (every 10 batches) to reduce I/O
+      // Final save happens at the end in buildKnowledgeGraph()
+      if (this.options.enableGraph && this.graphStore && i % (batchSize * 10) === 0) {
         this.graphStore.save();
       }
     }

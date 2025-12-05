@@ -25,6 +25,7 @@ interface GraphIndex {
   chunkCount: number;
   batchSize: number;
   lastUpdated: number;
+  sources?: Set<string>; // Track which source files have chunks (in-memory only)
 }
 
 interface ChunkBatch {
@@ -65,6 +66,7 @@ export class GraphStore {
   private chunksCache: Map<number, GraphChunkData[]> = new Map();
   private embeddingsCache: Map<number, number[][]> = new Map();
   private cacheAccessOrder: number[] = []; // Track LRU for cache eviction
+  private sourcesIndex: Set<string> = new Set(); // Fast lookup for source file existence
 
   constructor(outputDir: string) {
     this.graphDir = path.join(outputDir, GRAPH_DIR);
@@ -76,6 +78,31 @@ export class GraphStore {
     this.ensureDirectories();
     this.config = this.loadConfig();
     this.index = this.loadIndex();
+    this.buildSourcesIndex();
+  }
+
+  /**
+   * Build index of source files that have chunks
+   * This avoids expensive lookups when checking if we need to remove chunks
+   */
+  private buildSourcesIndex(): void {
+    if (this.index.chunkCount === 0) {
+      return;
+    }
+
+    const totalBatches = Math.ceil(this.index.chunkCount / BATCH_SIZE);
+    
+    for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+      const chunks = this.loadChunkBatch(batchNum);
+      
+      for (const chunk of chunks) {
+        this.sourcesIndex.add(chunk.source);
+      }
+      
+      // Clear cache immediately to free memory
+      this.chunksCache.delete(batchNum);
+      this.embeddingsCache.delete(batchNum);
+    }
   }
 
   private ensureDirectories(): void {
@@ -345,39 +372,145 @@ export class GraphStore {
     this.chunksCache.set(batchNum, chunks);
     this.embeddingsCache.set(batchNum, embeddings);
     
+    // Update sources index
+    this.sourcesIndex.add(chunk.source);
+    
     this.index.chunkCount++;
   }
 
   /**
+   * Check if a source file has any chunks in the store
+   * This is O(1) using the in-memory index
+   */
+  public hasChunksForSource(source: string): boolean {
+    return this.sourcesIndex.has(source);
+  }
+
+  /**
    * Remove all chunks from a specific source file
+   * Optimized to process batches one at a time to avoid loading all data into memory
    */
   public removeChunksBySource(source: string): void {
     const totalBatches = Math.ceil(this.index.chunkCount / BATCH_SIZE);
     let removedCount = 0;
 
-    // Collect all chunks that should remain
-    const remainingChunks: GraphChunkData[] = [];
-    const remainingEmbeddings: number[][] = [];
-
+    // First pass: count removals and mark affected batches
+    const affectedBatches = new Set<number>();
+    
     for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
       const chunks = this.loadChunkBatch(batchNum);
-      const embeddings = this.loadEmbeddingBatch(batchNum);
-
+      
       for (let i = 0; i < chunks.length; i++) {
-        if (chunks[i]!.source !== source) {
-          remainingChunks.push(chunks[i]!);
-          remainingEmbeddings.push(embeddings[i]!);
-        } else {
+        if (chunks[i]!.source === source) {
+          affectedBatches.add(batchNum);
           removedCount++;
         }
       }
+      
+      // Clear from cache immediately after checking to free memory
+      this.chunksCache.delete(batchNum);
+      this.embeddingsCache.delete(batchNum);
     }
 
     if (removedCount === 0) {
       return; // Nothing to remove
     }
 
-    // Clear all existing batch files
+    // If very few batches affected, do in-place filtering
+    if (affectedBatches.size < 5) {
+      for (const batchNum of affectedBatches) {
+        const chunks = this.loadChunkBatch(batchNum);
+        const embeddings = this.loadEmbeddingBatch(batchNum);
+        
+        const filtered = chunks.reduce<{chunks: GraphChunkData[], embeddings: number[][]}>((acc, chunk, i) => {
+          if (chunk.source !== source) {
+            acc.chunks.push(chunk);
+            acc.embeddings.push(embeddings[i]!);
+          }
+          return acc;
+        }, {chunks: [], embeddings: []});
+        
+        this.saveChunkBatch(batchNum, filtered.chunks);
+        this.saveEmbeddingBatch(batchNum, filtered.embeddings);
+        
+        // Clear from cache after saving
+        this.chunksCache.delete(batchNum);
+        this.embeddingsCache.delete(batchNum);
+      }
+      
+      this.index.chunkCount -= removedCount;
+      
+      // Remove from sources index
+      this.sourcesIndex.delete(source);
+      
+      this.saveIndex();
+      return;
+    }
+
+    // For many affected batches, rebuild from scratch (streaming approach)
+    // Use a temporary directory to avoid corrupting existing data
+    const tempChunksDir = this.chunksDir + '.tmp';
+    const tempEmbeddingsDir = this.embeddingsDir + '.tmp';
+    
+    if (!fs.existsSync(tempChunksDir)) {
+      fs.mkdirSync(tempChunksDir, { recursive: true });
+    }
+    if (!fs.existsSync(tempEmbeddingsDir)) {
+      fs.mkdirSync(tempEmbeddingsDir, { recursive: true });
+    }
+
+    let newChunkCount = 0;
+    let newBatchNum = 0;
+    let newBatchChunks: GraphChunkData[] = [];
+    let newBatchEmbeddings: number[][] = [];
+
+    // Process each batch one at a time
+    for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+      const chunks = this.loadChunkBatch(batchNum);
+      const embeddings = this.loadEmbeddingBatch(batchNum);
+
+      for (let i = 0; i < chunks.length; i++) {
+        if (chunks[i]!.source !== source) {
+          newBatchChunks.push(chunks[i]!);
+          newBatchEmbeddings.push(embeddings[i]!);
+          
+          // Write batch when full
+          if (newBatchChunks.length >= BATCH_SIZE) {
+            const tempChunkPath = path.join(tempChunksDir, `batch-${newBatchNum.toString().padStart(4, "0")}.json`);
+            const tempEmbeddingPath = path.join(tempEmbeddingsDir, `batch-${newBatchNum.toString().padStart(4, "0")}.bin`);
+            
+            fs.writeFileSync(tempChunkPath, JSON.stringify({ chunks: newBatchChunks }, null, 2), "utf-8");
+            fs.writeFileSync(tempEmbeddingPath, this.encodeEmbeddings(newBatchEmbeddings));
+            
+            newChunkCount += newBatchChunks.length;
+            newBatchNum++;
+            newBatchChunks = [];
+            newBatchEmbeddings = [];
+          }
+        }
+      }
+      
+      // Clear from cache to free memory
+      this.chunksCache.delete(batchNum);
+      this.embeddingsCache.delete(batchNum);
+    }
+
+    // Write final partial batch
+    if (newBatchChunks.length > 0) {
+      const tempChunkPath = path.join(tempChunksDir, `batch-${newBatchNum.toString().padStart(4, "0")}.json`);
+      const tempEmbeddingPath = path.join(tempEmbeddingsDir, `batch-${newBatchNum.toString().padStart(4, "0")}.bin`);
+      
+      fs.writeFileSync(tempChunkPath, JSON.stringify({ chunks: newBatchChunks }, null, 2), "utf-8");
+      fs.writeFileSync(tempEmbeddingPath, this.encodeEmbeddings(newBatchEmbeddings));
+      
+      newChunkCount += newBatchChunks.length;
+    }
+
+    // Clear all caches
+    this.chunksCache.clear();
+    this.embeddingsCache.clear();
+
+    // Remove old batch files
     for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
       const chunkPath = this.getChunkBatchPath(batchNum);
       const embeddingPath = this.getEmbeddingBatchPath(batchNum);
@@ -385,25 +518,33 @@ export class GraphStore {
       if (fs.existsSync(embeddingPath)) fs.unlinkSync(embeddingPath);
     }
 
-    // Clear caches
-    this.chunksCache.clear();
-    this.embeddingsCache.clear();
-
-    // Re-write remaining chunks in new batches
-    this.index.chunkCount = remainingChunks.length;
-    const newTotalBatches = Math.ceil(remainingChunks.length / BATCH_SIZE);
-
-    for (let batchNum = 0; batchNum < newTotalBatches; batchNum++) {
-      const startIdx = batchNum * BATCH_SIZE;
-      const endIdx = Math.min(startIdx + BATCH_SIZE, remainingChunks.length);
-      
-      const batchChunks = remainingChunks.slice(startIdx, endIdx);
-      const batchEmbeddings = remainingEmbeddings.slice(startIdx, endIdx);
-      
-      this.saveChunkBatch(batchNum, batchChunks);
-      this.saveEmbeddingBatch(batchNum, batchEmbeddings);
+    // Move temp files to main directories
+    const tempChunkFiles = fs.readdirSync(tempChunksDir);
+    for (const file of tempChunkFiles) {
+      fs.renameSync(
+        path.join(tempChunksDir, file),
+        path.join(this.chunksDir, file)
+      );
     }
 
+    const tempEmbeddingFiles = fs.readdirSync(tempEmbeddingsDir);
+    for (const file of tempEmbeddingFiles) {
+      fs.renameSync(
+        path.join(tempEmbeddingsDir, file),
+        path.join(this.embeddingsDir, file)
+      );
+    }
+
+    // Clean up temp directories
+    fs.rmdirSync(tempChunksDir);
+    fs.rmdirSync(tempEmbeddingsDir);
+
+    // Update index
+    this.index.chunkCount = newChunkCount;
+    
+    // Remove from sources index
+    this.sourcesIndex.delete(source);
+    
     this.saveIndex();
   }
 
@@ -570,8 +711,9 @@ export class GraphStore {
     this.index = this.createEmptyIndex();
     this.saveIndex();
 
-    // Clear caches
+    // Clear caches and sources index
     this.chunksCache.clear();
     this.embeddingsCache.clear();
+    this.sourcesIndex.clear();
   }
 }
